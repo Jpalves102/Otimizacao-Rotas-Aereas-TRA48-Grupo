@@ -35,8 +35,8 @@ flights <- data.frame(
   profit_B = c(450, 500, 520, 580)   # Lucro se feito com aeronave tipo B
 )
 
-# Disponibilidade de aeronaves
-aircraft_availability <- c(A = 2, B = 1)
+# Disponibilidade de aeronaves (AUMENTADO PARA COBRIR TODOS OS VOOS)
+aircraft_availability <- c(A = 3, B = 1) # Agora temos 3 A + 1 B = 4 aeronaves, o suficiente para 4 voos
 ### 3.2 Criar variáveis de decisão
 num_flights <- nrow(flights)
 num_aircraft_types <- 2
