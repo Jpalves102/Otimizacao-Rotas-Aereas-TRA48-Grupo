@@ -1,0 +1,146 @@
+---
+title: "Otimização de Rotas Aéreas com Programação Linear"
+author: "João Pedro Alves de Sousa Abreu / Manuela de Almeida Gomes Rocha / Marcelo Maciel Bohler"
+output: html_document
+---
+
+## 1. Contextualização do Problema
+A otimização de rotas aéreas é um desafio central no transporte aéreo, pois envolve alocar a frota de aeronaves de forma eficiente para maximizar lucro ou minimizar custos operacionais.  
+No cenário real, companhias aéreas precisam decidir quais aeronaves executarão quais voos, considerando restrições de disponibilidade, manutenção, capacidade e conexões entre voos.  
+Uma forma de modelar esse problema é por meio de **redes de fluxo com múltiplas mercadorias**, onde cada tipo de aeronave é tratado como um fluxo distinto.
+
+## 2. Principais Achados na Literatura
+O artigo estudado apresenta o problema de *fleet assignment* como um **problema de programação linear inteira mista** (MILP), modelado em uma rede de nós (aeroporto + tempo) e arcos (voos e períodos de solo).  
+A formulação:
+- Garante conservação de fluxo de aeronaves
+- Respeita a disponibilidade da frota
+- Maximiza a receita líquida (receita − custos)
+- Utiliza técnicas como *branch-and-bound*, *column generation* e relaxações para grandes instâncias
+
+## 3. Modelo Simplificado em R
+
+```{r setup, message=FALSE, warning=FALSE}
+library(lpSolve)
+library(dplyr)
+library(ggplot2)
+library(igraph)
+
+### 3.1 Definição dos dados
+# Definição dos voos
+flights <- data.frame(
+  flight_id = c("F1", "F2", "F3", "F4"),
+  origin = c("A", "A", "B", "C"),
+  destination = c("B", "C", "C", "A"),
+  profit_A = c(500, 600, 550, 650),  # Lucro se feito com aeronave tipo A
+  profit_B = c(450, 500, 520, 580)   # Lucro se feito com aeronave tipo B
+)
+
+# Disponibilidade de aeronaves
+aircraft_availability <- c(A = 2, B = 1)
+### 3.2 Criar variáveis de decisão
+num_flights <- nrow(flights)
+num_aircraft_types <- 2
+# Vetor de coeficientes da função objetivo
+obj_coeffs <- as.vector(t(flights[, c("profit_A", "profit_B")]))
+# Nomes das variáveis (ex.: F1_A, F1_B, F2_A, F2_B...)
+var_names <- paste0(rep(flights$flight_id, each = num_aircraft_types),
+                    "_", rep(c("A", "B"), times = num_flights))
+### 3.3 Restrições
+# Restrição 1: cada voo tem exatamente 1 tipo
+constr_flight <- matrix(0, nrow = num_flights, ncol = length(obj_coeffs))
+for (i in 1:num_flights) {
+  constr_flight[i, (2*i - 1):(2*i)] <- 1
+}
+
+# Restrição 2: disponibilidade por tipo
+constr_aircraft <- matrix(0, nrow = num_aircraft_types, ncol = length(obj_coeffs))
+# Tipo A → posições ímpares
+constr_aircraft[1, seq(1, length(obj_coeffs), by = 2)] <- 1
+# Tipo B → posições pares
+constr_aircraft[2, seq(2, length(obj_coeffs), by = 2)] <- 1
+
+# Juntar restrições
+A_mat <- rbind(constr_flight, constr_aircraft)
+dir_vec <- c(rep("==", num_flights), rep("<=", num_aircraft_types))
+rhs_vec <- c(rep(1, num_flights), aircraft_availability)
+### 3.4 Resolver o modelo
+lp_model <- lp(
+  direction = "max",
+  objective.in = obj_coeffs,
+  const.mat = A_mat,
+  const.dir = dir_vec,
+  const.rhs = rhs_vec,
+  all.bin = TRUE
+)
+
+# Resultado
+solution <- lp_model$solution
+names(solution) <- var_names
+solution
+lp_model$objval
+### 3.5 Interpretação da solução
+assigned <- data.frame(
+  flight = flights$flight_id,
+  chosen_aircraft = ifelse(solution[seq(1, length(solution), by=2)] == 1, "A", "B"),
+  profit = mapply(function(f,a) {
+    if (a == "A") flights$profit_A[flights$flight_id == f] else flights$profit_B[flights$flight_id == f]
+  }, flights$flight_id, ifelse(solution[seq(1, length(solution), by=2)] == 1, "A", "B"))
+)
+
+assigned
+### 3.6 Visualização dos lucros
+library(tidyr)
+library(ggplot2)
+profit_df <- flights %>%
+  tidyr::pivot_longer(cols = c("profit_A", "profit_B"),
+                      names_to = "Aircraft", values_to = "Profit") %>%
+  mutate(Aircraft = ifelse(Aircraft == "profit_A", "A", "B"),
+         Assignment = paste0(flight_id, "-", Aircraft))
+
+ggplot(profit_df, aes(x = Assignment, y = Profit, fill = Aircraft)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Lucro por atribuição de aeronave ao voo",
+       x = "Voo - Aeronave", y = "Lucro") +
+  theme_minimal()
+### 3.7 Visualização da Rede de Fluxo
+library(igraph)
+
+# Criar grafo a partir dos voos (origem → destino)
+edges <- flights %>%
+  select(origin, destination) %>%
+  as.matrix()
+
+# Criar objeto igraph
+g <- graph_from_edgelist(edges, directed = TRUE)
+
+# Layout automático (pode ser fixo para manter a posição estável)
+layout <- layout_with_fr(g)
+
+# 1º gráfico: estrutura simples da rede
+plot(
+  g,
+  layout            = layout,
+  vertex.size       = 30,
+  vertex.color      = "lightblue",
+  vertex.label.color= "black",
+  vertex.label.cex  = 1.2,
+  edge.arrow.size   = 0.4,
+  main              = "Rede de Fluxo: Aeroportos e Voos"
+)
+
+# Adicionar rótulos dos voos como atributo da aresta
+E(g)$label <- flights$flight_id
+
+# 2º gráfico: rede com identificação dos voos
+plot(
+  g,
+  layout            = layout,
+  vertex.size       = 30,
+  vertex.color      = "lightblue",
+  vertex.label.color= "black",
+  vertex.label.cex  = 1.2,
+  edge.arrow.size   = 0.4,
+  edge.label        = E(g)$label,
+  edge.label.cex    = 0.9,
+  main              = "Rede de Fluxo com Identificação dos Voos"
+)
